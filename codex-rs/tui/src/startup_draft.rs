@@ -122,7 +122,7 @@ impl StartupDraft {
             tui,
             terminal_restore_guard,
             pump: StartupDraftPump {
-                header: startup_session_header(/*config*/ None),
+                header: startup_session_header(/*config*/ None, session_action),
                 bottom_pane,
                 events,
                 app_event_rx,
@@ -168,7 +168,7 @@ impl StartupDraftPump {
     /// Refresh the session header and safe editor shortcuts without enabling modal editing.
     pub(crate) fn apply_config(&mut self, config: &Config) {
         let local_settings = crate::local_settings::LocalSettings::from(config);
-        self.header = startup_session_header(Some(config));
+        self.header = startup_session_header(Some(config), self.session_action);
         self.bottom_pane
             .set_disable_paste_burst(local_settings.tui.disable_paste_burst.unwrap_or(false));
         self.bottom_pane.request_redraw();
@@ -193,11 +193,23 @@ impl StartupDraftPump {
         if self.session_action == session_action {
             return Ok(());
         }
-        self.session_action = session_action;
+        self.set_session_action(session_action);
         if self.initial_screen == StartupDraftInitialScreen::Composer {
             self.draw(tui, tui.terminal.last_known_screen_size)?;
         }
         Ok(())
+    }
+
+    fn set_session_action(&mut self, session_action: StartupDraftSessionAction) {
+        self.session_action = session_action;
+        if let Some(header) = self
+            .header
+            .as_any_mut()
+            .downcast_mut::<history_cell::SessionHeaderHistoryCell>()
+        {
+            header
+                .set_landing_presentation(matches!(session_action, StartupDraftSessionAction::New));
+        }
     }
 
     /// Poll one existing startup future alongside the original terminal input stream.
@@ -450,23 +462,26 @@ fn handle_startup_draft_key(bottom_pane: &mut BottomPane, key: KeyEvent) -> io::
     Ok(())
 }
 
-fn startup_session_header(config: Option<&Config>) -> Box<dyn HistoryCell> {
+fn startup_session_header(
+    config: Option<&Config>,
+    session_action: StartupDraftSessionAction,
+) -> Box<dyn HistoryCell> {
     let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
     let directory = config.map_or_else(
         || PathBuf::from("loading"),
         |config| config.cwd.to_path_buf(),
     );
-    Box::new(
-        history_cell::SessionHeaderHistoryCell::new_with_style(
-            "loading".to_string(),
-            placeholder_style,
-            /*reasoning_effort*/ None,
-            /*show_fast_status*/ false,
-            directory,
-            CODEX_CLI_VERSION,
-        )
-        .with_yolo_mode(config.is_some_and(history_cell::is_yolo_mode)),
+    let mut header = history_cell::SessionHeaderHistoryCell::new_with_style(
+        "loading".to_string(),
+        placeholder_style,
+        /*reasoning_effort*/ None,
+        /*show_fast_status*/ false,
+        directory,
+        CODEX_CLI_VERSION,
     )
+    .with_yolo_mode(config.is_some_and(history_cell::is_yolo_mode));
+    header.set_landing_presentation(matches!(session_action, StartupDraftSessionAction::New));
+    Box::new(header)
 }
 
 fn startup_draft_renderable<'a>(

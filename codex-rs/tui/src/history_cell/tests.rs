@@ -686,7 +686,7 @@ async fn session_info_uses_availability_nux_tooltip_override() {
         /*show_fast_status*/ false,
     );
 
-    let rendered = render_transcript(&cell).join("\n");
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
     assert!(rendered.contains("Model just became available"));
 }
 
@@ -729,7 +729,51 @@ async fn session_info_first_event_suppresses_tooltips_and_nux() {
 
     let rendered = render_transcript(&cell).join("\n");
     assert!(!rendered.contains("Model just became available"));
-    assert!(rendered.contains("To get started"));
+    assert!(rendered.contains("╭──"));
+    assert!(rendered.contains("/ commands"));
+}
+
+#[tokio::test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "snapshot path rendering differs on Windows"
+)]
+async fn session_info_first_event_landing_snapshot() {
+    let mut config = test_config().await;
+    config.cwd = test_path_buf("/tmp/project").abs();
+    let cell = new_session_info(
+        &config,
+        &crate::local_settings::LocalSettings::from(&config),
+        "gpt-5.6-sol",
+        &session_configured_event("gpt-5.6-sol"),
+        /*is_first_event*/ true,
+        /*tooltip_override*/ None,
+        Some(PlanType::Free),
+        /*show_fast_status*/ true,
+    );
+
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 64)).join("\n"));
+}
+
+#[test]
+fn landing_session_header_adapts_to_narrow_width() {
+    const WIDTH: u16 = 18;
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.6-sol".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ true,
+        PathBuf::from("a/very/long/project/directory"),
+        "test",
+    )
+    .with_landing_presentation();
+
+    let lines = cell.display_lines(WIDTH);
+    assert!(
+        lines
+            .iter()
+            .all(|line| line_width(line) <= usize::from(WIDTH))
+    );
+    insta::assert_snapshot!(render_lines(&lines).join("\n"));
 }
 
 #[tokio::test]

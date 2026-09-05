@@ -24,7 +24,7 @@ impl ChatWidget {
             has_codex_backend_auth,
             model_catalog,
             feedback,
-            is_first_run,
+            show_landing,
             status_account_display,
             runtime_model_provider_base_url,
             initial_plan_type,
@@ -62,7 +62,7 @@ impl ChatWidget {
             settings: fallback_default,
         };
 
-        let active_cell = Some(Self::placeholder_session_header_cell(&config));
+        let active_cell = Some(Self::placeholder_session_header_cell(&config, show_landing));
 
         let current_cwd = Some(config.cwd.to_path_buf());
         let effective_service_tier = crate::service_tier_resolution::effective_service_tier(
@@ -226,7 +226,7 @@ impl ChatWidget {
             chat_keymap,
             permission_shortcut_pending: false,
             queued_message_edit_hint_binding,
-            show_welcome_banner: is_first_run,
+            show_welcome_banner: show_landing,
             startup_tooltip_override,
             suppress_session_configured_redraw: false,
             suppress_initial_user_message_submit: false,

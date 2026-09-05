@@ -28,7 +28,7 @@ where
 {
     let (tx, rx) = unbounded_channel();
     StartupDraftPump {
-        header: startup_session_header(/*config*/ None),
+        header: startup_session_header(/*config*/ None, StartupDraftSessionAction::New),
         bottom_pane: startup_draft_bottom_pane(
             AppEventSender::new(tx),
             FrameRequester::test_dummy(),
@@ -69,7 +69,7 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
             StartupDraftSessionAction::New,
         ),
     ] {
-        pump.session_action = session_action;
+        pump.set_session_action(session_action);
         pump.bottom_pane
             .set_composer_text(text.to_string(), Vec::new(), Vec::new());
         let renderable =
@@ -169,7 +169,7 @@ async fn startup_draft_clears_loading_status_when_starting_fresh() {
     ] {
         let mut pump = startup_test_pump(std::iter::empty());
         pump.initial_screen = initial_screen;
-        pump.session_action = session_action;
+        pump.set_session_action(session_action);
         if initial_screen == StartupDraftInitialScreen::Composer {
             pump.bottom_pane.insert_str("draft while loading");
         }
@@ -218,21 +218,22 @@ async fn startup_draft_hydrates_its_header_without_moving_the_composer() {
         startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action)
             .desired_height(width);
 
-    assert_eq!(
-        pump.header.raw_lines().last().map(ToString::to_string),
-        Some("directory: loading".to_string())
+    assert!(
+        pump.header
+            .display_lines(width)
+            .iter()
+            .any(|line| line.to_string().trim() == "loading")
     );
     pump.apply_config(&config);
-    let expected_directory = format!(
-        "directory: {}",
-        crate::history_cell::SessionHeaderHistoryCell::format_directory_inner(
-            config.cwd.as_path(),
-            /*max_width*/ None,
-        )
+    let expected_directory = crate::history_cell::SessionHeaderHistoryCell::format_directory_inner(
+        config.cwd.as_path(),
+        /*max_width*/ None,
     );
-    assert_eq!(
-        pump.header.raw_lines().last().map(ToString::to_string),
-        Some(expected_directory)
+    assert!(
+        pump.header
+            .display_lines(width)
+            .iter()
+            .any(|line| line.to_string().trim() == expected_directory)
     );
     assert_eq!(
         startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action)

@@ -7,6 +7,12 @@ use crate::width::display_width;
 
 pub(crate) const SESSION_HEADER_MAX_INNER_WIDTH: usize = 56; // Just an eyeballed value
 
+const LANDING_WORDMARK: [[&str; 5]; 3] = [
+    ["╭──", "╭─╮", "┌─╮", "┌──", "╷ ╷"],
+    ["│  ", "│ │", "│ │", "├─ ", " ╳ "],
+    ["╰──", "╰─╯", "└─╯", "└──", "╵ ╵"],
+];
+
 pub(crate) fn card_inner_width(width: u16, max_inner_width: usize) -> Option<usize> {
     if width < 4 {
         return None;
@@ -137,7 +143,7 @@ pub(crate) fn new_session_info(
     show_fast_status: bool,
 ) -> SessionInfoCell {
     // Header box rendered as history (so it appears at the very top)
-    let header = SessionHeaderHistoryCell::new(
+    let mut header = SessionHeaderHistoryCell::new(
         session.model.clone(),
         session.reasoning_effort.clone(),
         show_fast_status,
@@ -148,44 +154,14 @@ pub(crate) fn new_session_info(
         session.approval_policy,
         &session.permission_profile,
     ));
+    if is_first_event {
+        header = header.with_landing_presentation();
+    }
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
-    if is_first_event {
-        // Help lines below the header (new copy and list)
-        let help_lines: Vec<Line<'static>> = vec![
-            "  To get started, describe a task or try one of these commands:"
-                .dim()
-                .into(),
-            Line::from(""),
-            Line::from(vec![
-                "  ".into(),
-                "/init".into(),
-                " - create an AGENTS.md file with instructions for Codex".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/status".into(),
-                " - show current session configuration".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/permissions".into(),
-                " - choose what Codex is allowed to do".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/model".into(),
-                " - choose what model and reasoning effort to use".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/review".into(),
-                " - review any changes and find issues".dim(),
-            ]),
-        ];
-
-        parts.push(Box::new(PlainHistoryCell { lines: help_lines }));
-    } else {
+    // The landing presentation owns the compact discovery hints so the first screen stays spacious
+    // instead of turning into a command directory.
+    if !is_first_event {
         if local_settings.tui.show_tooltips
             && let Some(tooltips) = tooltip_override
                 .or_else(|| tooltips::get_tooltip(auth_plan, show_fast_status))
@@ -236,6 +212,7 @@ pub(crate) struct SessionHeaderHistoryCell {
     show_fast_status: bool,
     directory: PathBuf,
     yolo_mode: bool,
+    landing_presentation: bool,
 }
 
 impl SessionHeaderHistoryCell {
@@ -272,12 +249,22 @@ impl SessionHeaderHistoryCell {
             show_fast_status,
             directory,
             yolo_mode: false,
+            landing_presentation: false,
         }
     }
 
     pub(crate) fn with_yolo_mode(mut self, yolo_mode: bool) -> Self {
         self.yolo_mode = yolo_mode;
         self
+    }
+
+    pub(crate) fn with_landing_presentation(mut self) -> Self {
+        self.landing_presentation = true;
+        self
+    }
+
+    pub(crate) fn set_landing_presentation(&mut self, landing_presentation: bool) {
+        self.landing_presentation = landing_presentation;
     }
 
     fn format_directory(&self, max_width: Option<usize>) -> String {
@@ -312,10 +299,115 @@ impl SessionHeaderHistoryCell {
             .as_ref()
             .map(ReasoningEffortConfig::as_str)
     }
+
+    fn centered_line(mut line: Line<'static>, width: usize) -> Line<'static> {
+        let padding = width.saturating_sub(line_width(&line)) / 2;
+        if padding > 0 {
+            line.spans.insert(0, " ".repeat(padding).into());
+        }
+        line
+    }
+
+    fn landing_display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let width = usize::from(width);
+        if width == 0 {
+            return Vec::new();
+        }
+
+        let mut lines = vec![Line::from("")];
+        if width >= 28 {
+            let letter_styles = [
+                Style::default().bold(),
+                Style::default().bold(),
+                Style::default().magenta().bold(),
+                Style::default().bold(),
+                Style::default().cyan().bold(),
+            ];
+            for row in LANDING_WORDMARK {
+                let mut spans = Vec::with_capacity(row.len() * 2 - 1);
+                for (index, glyph) in row.into_iter().enumerate() {
+                    if index > 0 {
+                        spans.push("  ".into());
+                    }
+                    spans.push(Span::styled(glyph, letter_styles[index]));
+                }
+                lines.push(Self::centered_line(Line::from(spans), width));
+            }
+        } else {
+            let wordmark = if width >= 9 { "C O D E X" } else { "CODEX" };
+            let wordmark = truncate_line_with_ellipsis_if_overflow(
+                Line::from(wordmark).magenta().bold(),
+                width,
+            );
+            lines.push(Self::centered_line(wordmark, width));
+        }
+
+        lines.push(Line::from(""));
+
+        let mut model_spans = vec![Span::styled(self.model.clone(), self.model_style).bold()];
+        if width >= 28
+            && let Some(reasoning) = self.reasoning_label()
+        {
+            model_spans.push("  ·  ".dim());
+            model_spans.push(reasoning.to_owned().dim());
+        }
+        if width >= 34 && self.show_fast_status {
+            model_spans.push("  ·  ".dim());
+            model_spans.push("fast".magenta());
+        }
+        let model_line = truncate_line_with_ellipsis_if_overflow(
+            Line::from(model_spans),
+            width.saturating_sub(2),
+        );
+        lines.push(Self::centered_line(model_line, width));
+
+        let directory = self.format_directory(Some(width.saturating_sub(4)));
+        let directory_line =
+            truncate_line_with_ellipsis_if_overflow(Line::from(directory).dim(), width);
+        lines.push(Self::centered_line(directory_line, width));
+
+        if self.yolo_mode {
+            lines.push(Self::centered_line(
+                "YOLO permissions".magenta().bold().into(),
+                width,
+            ));
+        }
+
+        lines.push(Line::from(""));
+        let hints = if width >= 34 {
+            vec![
+                "/".cyan(),
+                " commands".dim(),
+                "      ".into(),
+                "@".cyan(),
+                " files".dim(),
+                "      ".into(),
+                "?".cyan(),
+                " shortcuts".dim(),
+            ]
+        } else if width >= 20 {
+            vec![
+                "/".cyan(),
+                " commands".dim(),
+                "    ".into(),
+                "?".cyan(),
+                " shortcuts".dim(),
+            ]
+        } else {
+            vec!["?".cyan(), " shortcuts".dim()]
+        };
+        lines.push(Self::centered_line(Line::from(hints), width));
+        lines.push(Line::from(""));
+        lines
+    }
 }
 
 impl HistoryCell for SessionHeaderHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if self.landing_presentation {
+            return self.landing_display_lines(width);
+        }
+
         let Some(inner_width) = card_inner_width(width, SESSION_HEADER_MAX_INNER_WIDTH) else {
             return Vec::new();
         };

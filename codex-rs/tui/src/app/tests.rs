@@ -592,7 +592,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
         has_codex_backend_auth: false,
         model_catalog: app.model_catalog.clone(),
         feedback: codex_feedback::CodexFeedback::new(),
-        is_first_run: false,
+        show_landing: false,
         status_account_display: None,
         runtime_model_provider_base_url: None,
         initial_plan_type: None,
@@ -7729,7 +7729,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
         has_codex_backend_auth: app.chat_widget.has_codex_backend_auth(),
         model_catalog: app.model_catalog.clone(),
         feedback: app.feedback.clone(),
-        is_first_run: false,
+        show_landing: false,
         status_account_display: app.chat_widget.status_account_display().cloned(),
         runtime_model_provider_base_url: app
             .chat_widget

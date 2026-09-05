@@ -3,12 +3,16 @@ source: tui/src/startup_draft_tests.rs
 expression: "snapshots.join(\"\\n---\\n\")"
 ---
 empty (48 columns):
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+
+            ╭──  ╭─╮  ┌─╮  ┌──  ╷ ╷
+            │    │ │  │ │  ├─    ╳
+            ╰──  ╰─╯  └─╯  └──  ╵ ╵
+
+                    loading
+                    loading
+
+    / commands      @ files      ? shortcuts
+
 
 
 › Ask Codex to do anything
@@ -42,12 +46,16 @@ forking (48 columns):
 
 ---
 multiline (48 columns):
-╭───────────────────────────────────────╮
-│ >_ OpenAI Codex (v<VERSION>)              │
-│                                       │
-│ model:     loading   /model to change │
-│ directory: loading                    │
-╰───────────────────────────────────────╯
+
+            ╭──  ╭─╮  ┌─╮  ┌──  ╷ ╷
+            │    │ │  │ │  ├─    ╳
+            ╰──  ╰─╯  └─╯  └──  ╵ ╵
+
+                    loading
+                    loading
+
+    / commands      @ files      ? shortcuts
+
 
 
 › first startup line
@@ -56,12 +64,14 @@ multiline (48 columns):
 
 ---
 narrow (18 columns):
-╭────────────────╮
-│ >_ OpenAI Cod… │
-│                │
-│ model:     lo… │
-│ directory: …ng │
-╰────────────────╯
+
+    C O D E X
+
+     loading
+     loading
+
+   ? shortcuts
+
 
 
 › first startup

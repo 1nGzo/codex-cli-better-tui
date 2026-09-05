@@ -803,7 +803,7 @@ impl App {
             has_codex_backend_auth: self.chat_widget.has_codex_backend_auth(),
             model_catalog: self.model_catalog.clone(),
             feedback: self.feedback.clone(),
-            is_first_run: false,
+            show_landing: false,
             status_account_display: self.chat_widget.status_account_display().cloned(),
             runtime_model_provider_base_url: self
                 .chat_widget

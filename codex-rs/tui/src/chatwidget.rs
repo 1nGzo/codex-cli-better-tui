@@ -525,7 +525,8 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) has_codex_backend_auth: bool,
     pub(crate) model_catalog: Arc<ModelCatalog>,
     pub(crate) feedback: codex_feedback::CodexFeedback,
-    pub(crate) is_first_run: bool,
+    /// Whether this widget owns a fresh, promptless startup surface rather than a restored task.
+    pub(crate) show_landing: bool,
     pub(crate) status_account_display: Option<StatusAccountDisplay>,
     pub(crate) runtime_model_provider_base_url: Option<String>,
     pub(crate) initial_plan_type: Option<PlanType>,
@@ -1498,19 +1499,24 @@ impl ChatWidget {
     }
 
     /// Build a placeholder header cell while the session is configuring.
-    fn placeholder_session_header_cell(config: &Config) -> Box<dyn HistoryCell> {
+    fn placeholder_session_header_cell(
+        config: &Config,
+        show_landing_presentation: bool,
+    ) -> Box<dyn HistoryCell> {
         let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
-        Box::new(
-            history_cell::SessionHeaderHistoryCell::new_with_style(
-                DEFAULT_MODEL_DISPLAY_NAME.to_string(),
-                placeholder_style,
-                /*reasoning_effort*/ None,
-                /*show_fast_status*/ false,
-                config.cwd.to_path_buf(),
-                CODEX_CLI_VERSION,
-            )
-            .with_yolo_mode(history_cell::is_yolo_mode(config)),
+        let mut header = history_cell::SessionHeaderHistoryCell::new_with_style(
+            DEFAULT_MODEL_DISPLAY_NAME.to_string(),
+            placeholder_style,
+            /*reasoning_effort*/ None,
+            /*show_fast_status*/ false,
+            config.cwd.to_path_buf(),
+            CODEX_CLI_VERSION,
         )
+        .with_yolo_mode(history_cell::is_yolo_mode(config));
+        if show_landing_presentation {
+            header = header.with_landing_presentation();
+        }
+        Box::new(header)
     }
 
     /// Merge the real session info cell with any placeholder header to avoid double boxes.
