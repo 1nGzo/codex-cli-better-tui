@@ -764,7 +764,8 @@ fn landing_session_header_medium_snapshot() {
         PathBuf::from("/tmp/project"),
         "test",
     )
-    .with_landing_presentation();
+    .with_landing_presentation()
+    .with_landing_plan(Some(PlanType::Plus));
 
     insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 44)).join("\n"));
 }
@@ -778,7 +779,8 @@ fn landing_session_header_resize_snapshots() {
         PathBuf::from("/tmp/project"),
         "test",
     )
-    .with_landing_presentation();
+    .with_landing_presentation()
+    .with_landing_plan(Some(PlanType::Plus));
 
     for width in [120, 96, 60, 18] {
         insta::assert_snapshot!(
@@ -789,8 +791,27 @@ fn landing_session_header_resize_snapshots() {
 }
 
 #[test]
+fn landing_session_header_hides_unavailable_account_and_repeated_context() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.6-sol".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ true,
+        PathBuf::from("/tmp/project"),
+        "test",
+    )
+    .with_landing_presentation()
+    .with_landing_plan(Some(PlanType::Unknown));
+
+    let rendered = render_lines(&cell.display_lines(/*width*/ 60)).join("\n");
+    assert!(!rendered.contains("gpt-5.6-sol"));
+    assert!(!rendered.contains("high"));
+    assert!(!rendered.contains("/tmp/project"));
+    assert!(!rendered.contains("PLAN"));
+}
+
+#[test]
 fn landing_session_header_motion_phase_snapshots() {
-    for phase in [0, 6] {
+    for phase in [0, 3, 6] {
         let cell = SessionHeaderHistoryCell::new(
             "gpt-5.6-sol".to_string(),
             Some(ReasoningEffortConfig::High),
@@ -818,6 +839,28 @@ fn landing_session_header_motion_phase_snapshots() {
 
         insta::assert_snapshot!(format!("landing_motion_phase_{phase}"), styles);
     }
+}
+
+#[test]
+fn landing_session_header_static_wordmark_is_uniform_silver() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.6-sol".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ true,
+        PathBuf::from("/tmp/project"),
+        "test",
+    )
+    .with_landing_presentation();
+
+    let wordmark_colors = cell
+        .display_lines(/*width*/ 60)
+        .iter()
+        .flat_map(|line| &line.spans)
+        .filter(|span| span.content.contains('█'))
+        .map(|span| span.style.fg)
+        .collect::<Vec<_>>();
+
+    assert_eq!(wordmark_colors, vec![Some(Color::Rgb(204, 211, 217)); 40]);
 }
 
 #[test]

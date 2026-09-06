@@ -8,15 +8,16 @@ use crate::width::display_width;
 pub(crate) const SESSION_HEADER_MAX_INNER_WIDTH: usize = 56; // Just an eyeballed value
 
 const LANDING_WIDE_MIN_WIDTH: usize = 52;
-const LANDING_MEDIUM_MIN_WIDTH: usize = 38;
-const LANDING_FRAME_MAX_INNER_WIDTH: usize = 60;
+const LANDING_MEDIUM_MIN_WIDTH: usize = 36;
+// Keep the landing stage close to the viewport edges while leaving a calm gutter around it.
+const LANDING_FRAME_MAX_INNER_WIDTH: usize = 104;
 const LANDING_MOTION_PERIOD: u8 = 12;
 const LANDING_MOTION_STEP_MS: u128 = 520;
 
 const LANDING_SILVER: Color = Color::Rgb(204, 211, 217);
+const LANDING_SILVER_DIM: Color = Color::Rgb(188, 196, 202);
 const LANDING_SILVER_BRIGHT: Color = Color::Rgb(232, 236, 239);
-const LANDING_BLUE: Color = Color::Rgb(139, 180, 211);
-const LANDING_MUTED_BLUE: Color = Color::Rgb(103, 137, 163);
+const LANDING_SCAN_ACCENT: Color = Color::Rgb(111, 183, 202);
 const LANDING_DARK_GOLD: Color = Color::Rgb(150, 125, 76);
 const LANDING_FRAME: Color = Color::Rgb(76, 86, 95);
 
@@ -195,7 +196,8 @@ pub(crate) fn new_session_info(
     .with_yolo_mode(has_yolo_permissions(
         session.approval_policy,
         &session.permission_profile,
-    ));
+    ))
+    .with_landing_plan(auth_plan);
     if is_first_event {
         header = header.with_landing_presentation().with_landing_motion(
             MotionMode::from_animations_enabled(local_settings.tui.animations),
@@ -260,6 +262,7 @@ pub(crate) struct SessionHeaderHistoryCell {
     landing_motion_enabled: bool,
     landing_motion_origin: Instant,
     landing_motion_phase_override: Option<u8>,
+    landing_plan: Option<String>,
 }
 
 impl SessionHeaderHistoryCell {
@@ -300,6 +303,7 @@ impl SessionHeaderHistoryCell {
             landing_motion_enabled: false,
             landing_motion_origin: Instant::now(),
             landing_motion_phase_override: None,
+            landing_plan: None,
         }
     }
 
@@ -315,6 +319,13 @@ impl SessionHeaderHistoryCell {
 
     pub(crate) fn with_landing_motion(mut self, motion_mode: MotionMode) -> Self {
         self.landing_motion_enabled = motion_mode == MotionMode::Animated;
+        self
+    }
+
+    pub(crate) fn with_landing_plan(mut self, plan: Option<PlanType>) -> Self {
+        self.landing_plan = plan
+            .filter(|plan| *plan != PlanType::Unknown)
+            .map(crate::status::plan_type_display_name);
         self
     }
 
@@ -374,6 +385,7 @@ impl SessionHeaderHistoryCell {
         letter_spacing: &'static str,
         width: usize,
         motion_phase: u8,
+        motion_active: bool,
     ) -> Vec<Line<'static>> {
         wordmark
             .iter()
@@ -386,12 +398,18 @@ impl SessionHeaderHistoryCell {
                     }
                     let sweep = (usize::from(motion_phase) + letter_index * 2 + row_index)
                         % usize::from(LANDING_MOTION_PERIOD);
-                    let style = if sweep <= 1 {
-                        Style::default().fg(LANDING_BLUE).bold()
+                    let style = if !motion_active {
+                        Style::default().fg(LANDING_SILVER).bold()
+                    } else if sweep <= 1 {
+                        // The only accent is carried by the moving scan; static landing screens
+                        // remain entirely silver.
+                        Style::default().fg(LANDING_SCAN_ACCENT).bold()
                     } else if sweep <= 3 {
                         Style::default().fg(LANDING_SILVER_BRIGHT).bold()
-                    } else {
+                    } else if motion_active && (usize::from(motion_phase) / 3) % 2 == 0 {
                         Style::default().fg(LANDING_SILVER).bold()
+                    } else {
+                        Style::default().fg(LANDING_SILVER_DIM).bold()
                     };
                     spans.push(Span::styled(*glyph, style));
                 }
@@ -410,7 +428,7 @@ impl SessionHeaderHistoryCell {
             return Vec::new();
         }
 
-        let frame_inner_width = width.saturating_sub(4).min(LANDING_FRAME_MAX_INNER_WIDTH);
+        let frame_inner_width = width.saturating_sub(8).min(LANDING_FRAME_MAX_INNER_WIDTH);
         if frame_inner_width == 0 {
             return Vec::new();
         }
@@ -429,6 +447,7 @@ impl SessionHeaderHistoryCell {
                 "  ",
                 frame_inner_width,
                 motion_phase,
+                self.landing_motion_enabled || self.landing_motion_phase_override.is_some(),
             ));
             lines.push(Line::from(""));
         } else if frame_inner_width >= LANDING_MEDIUM_MIN_WIDTH {
@@ -437,6 +456,7 @@ impl SessionHeaderHistoryCell {
                 " ",
                 frame_inner_width,
                 motion_phase,
+                self.landing_motion_enabled || self.landing_motion_phase_override.is_some(),
             ));
             lines.push(Line::from(""));
         } else {
@@ -453,67 +473,55 @@ impl SessionHeaderHistoryCell {
             lines.push(Line::from(""));
         }
 
-        let mut model_spans = vec![Span::styled(
-            self.model.clone(),
-            self.model_style.fg(LANDING_SILVER_BRIGHT).bold(),
-        )];
-        if frame_inner_width >= 28
-            && let Some(reasoning) = self.reasoning_label()
+        // Keep the hero's secondary row useful and truthful: the account plan is available from
+        // the bootstrap response, while model/cwd are already repeated in the footer.
+        if frame_inner_width >= 20
+            && let Some(plan) = &self.landing_plan
         {
-            model_spans.push("  ·  ".dim());
-            model_spans.push(reasoning.to_owned().dim());
+            let plan_line = Line::from(vec![
+                Span::styled("PLAN", Style::default().fg(LANDING_DARK_GOLD).bold()),
+                "  ".into(),
+                Span::styled(plan.clone(), Style::default().fg(LANDING_SILVER_BRIGHT)),
+            ]);
+            let plan_line = truncate_line_with_ellipsis_if_overflow(plan_line, frame_inner_width);
+            lines.push(Self::centered_line(plan_line, frame_inner_width));
         }
-        if frame_inner_width >= 34 && self.show_fast_status {
-            model_spans.push("  ·  ".dim());
-            model_spans.push(Span::styled("fast", Style::default().fg(LANDING_DARK_GOLD)));
-        }
-        let model_line = truncate_line_with_ellipsis_if_overflow(
-            Line::from(model_spans),
-            frame_inner_width.saturating_sub(2),
-        );
-        lines.push(Self::centered_line(model_line, frame_inner_width));
-
-        let directory = self.format_directory(Some(frame_inner_width.saturating_sub(4)));
-        let directory_line = truncate_line_with_ellipsis_if_overflow(
-            Line::from(directory).fg(LANDING_MUTED_BLUE),
-            frame_inner_width,
-        );
-        lines.push(Self::centered_line(directory_line, frame_inner_width));
 
         if self.yolo_mode {
-            lines.push(Self::centered_line(
+            let permissions_line = truncate_line_with_ellipsis_if_overflow(
                 Span::styled(
                     "YOLO permissions",
                     Style::default().fg(LANDING_DARK_GOLD).bold(),
                 )
                 .into(),
                 frame_inner_width,
-            ));
+            );
+            lines.push(Self::centered_line(permissions_line, frame_inner_width));
         }
 
         lines.push(Line::from(""));
         let hints = if frame_inner_width >= 34 {
             vec![
-                Span::styled("/", Style::default().fg(LANDING_BLUE)),
+                Span::styled("/", Style::default().fg(LANDING_DARK_GOLD).bold()),
                 " commands".dim(),
                 "      ".into(),
-                Span::styled("@", Style::default().fg(LANDING_BLUE)),
+                Span::styled("@", Style::default().fg(LANDING_DARK_GOLD).bold()),
                 " files".dim(),
                 "      ".into(),
-                Span::styled("?", Style::default().fg(LANDING_BLUE)),
+                Span::styled("?", Style::default().fg(LANDING_DARK_GOLD).bold()),
                 " shortcuts".dim(),
             ]
         } else if frame_inner_width >= 20 {
             vec![
-                Span::styled("/", Style::default().fg(LANDING_BLUE)),
+                Span::styled("/", Style::default().fg(LANDING_DARK_GOLD).bold()),
                 " commands".dim(),
                 "    ".into(),
-                Span::styled("?", Style::default().fg(LANDING_BLUE)),
+                Span::styled("?", Style::default().fg(LANDING_DARK_GOLD).bold()),
                 " shortcuts".dim(),
             ]
         } else {
             vec![
-                Span::styled("?", Style::default().fg(LANDING_BLUE)),
+                Span::styled("?", Style::default().fg(LANDING_DARK_GOLD).bold()),
                 " shortcuts".dim(),
             ]
         };
