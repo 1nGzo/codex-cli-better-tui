@@ -75,6 +75,24 @@ fn contains_text(buffer: &Buffer, text: &str) -> bool {
         })
 }
 
+fn drain_history_text(
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<crate::app_event::AppEvent>,
+) -> Vec<String> {
+    let mut history = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let crate::app_event::AppEvent::InsertHistoryCell(cell) = event {
+            let text = cell
+                .display_lines(/*width*/ 80)
+                .into_iter()
+                .flat_map(|line| line.spans)
+                .map(|span| span.content)
+                .collect::<String>();
+            history.push(text);
+        }
+    }
+    history
+}
+
 #[test]
 fn active_transcript_preserves_clipped_markdown_hyperlinks() {
     let cell = history_cell::AgentMarkdownCell::new(
@@ -193,15 +211,57 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
 
 #[tokio::test]
 async fn landing_motion_schedules_sparse_frames_only_while_active() {
-    let (mut widget, _sender, _events, _operations) = make_chatwidget_manual_with_sender().await;
+    let (mut widget, _sender, mut events, _operations) = make_chatwidget_manual_with_sender().await;
     widget.transcript.active_cell = Some(ChatWidget::placeholder_session_header_cell(
         &widget.config,
         /*show_landing_presentation*/ true,
         MotionMode::Animated,
     ));
-    widget.thread_id = Some(ThreadId::new());
     widget.show_welcome_banner = true;
     widget.local_settings.tui.animations = true;
+    let session = ThreadSessionState {
+        thread_id: ThreadId::new(),
+        forked_from_id: None,
+        fork_parent_title: None,
+        thread_name: None,
+        model: "gpt-5.6-sol".to_string(),
+        model_provider_id: "openai".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::Never,
+        approvals_reviewer: ApprovalsReviewer::User,
+        permission_profile: PermissionProfile::read_only(),
+        active_permission_profile: None,
+        cwd: widget.config.cwd.clone(),
+        runtime_workspace_roots: Vec::new(),
+        instruction_source_paths: Vec::new(),
+        reasoning_effort: None,
+        collaboration_mode: None,
+        personality: None,
+        message_history: None,
+        network_proxy: None,
+        rollout_path: None,
+    };
+    widget.thread_id = Some(session.thread_id);
+    let session_info = history_cell::new_session_info(
+        &widget.config,
+        &widget.local_settings,
+        "gpt-5.6-sol",
+        &session,
+        /*is_first_event*/ true,
+        /*tooltip_override*/ None,
+        /*auth_plan*/ None,
+        /*show_fast_status*/ false,
+    );
+    widget.apply_session_info_cell(session_info);
+
+    assert!(
+        widget
+            .transcript
+            .active_cell
+            .as_ref()
+            .is_some_and(|cell| cell.as_any().is::<history_cell::SessionInfoCell>())
+    );
+    assert!(drain_history_text(&mut events).is_empty());
 
     let (requester, mut requests) = FrameRequester::test_channel();
     widget.frame_requester = requester;
@@ -214,6 +274,27 @@ async fn landing_motion_schedules_sparse_frames_only_while_active() {
         scheduled_at.saturating_duration_since(before_tick) >= Duration::from_millis(500),
         "landing motion should remain low frequency"
     );
+
+    widget.pre_draw_tick();
+    assert!(
+        requests.try_recv().is_ok(),
+        "active landing should re-arm its next motion frame"
+    );
+
+    widget.add_to_history(history_cell::new_info_event(
+        "startup notice".to_string(),
+        /*hint*/ None,
+    ));
+    assert!(
+        widget
+            .transcript
+            .active_cell
+            .as_ref()
+            .is_some_and(|cell| cell.as_any().is::<history_cell::SessionInfoCell>())
+    );
+    let notice_history = drain_history_text(&mut events);
+    assert_eq!(notice_history.len(), 1);
+    assert!(notice_history[0].contains("startup notice"));
 
     let (requester, mut requests) = FrameRequester::test_channel();
     widget.frame_requester = requester;
@@ -228,6 +309,13 @@ async fn landing_motion_schedules_sparse_frames_only_while_active() {
     widget.show_welcome_banner = true;
     widget.submit_user_message(UserMessage::from("test prompt"));
     assert!(!widget.show_welcome_banner);
+    assert!(widget.transcript.active_cell.is_none());
+
+    let submitted_history = drain_history_text(&mut events);
+    assert_eq!(submitted_history.len(), 1);
+    let submitted_history = &submitted_history[0];
+    assert!(submitted_history.contains("test prompt"));
+    assert!(!submitted_history.contains('█'));
 
     let (requester, mut requests) = FrameRequester::test_channel();
     widget.frame_requester = requester;

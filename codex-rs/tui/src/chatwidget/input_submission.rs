@@ -397,8 +397,9 @@ impl ChatWidget {
             // scrollback when the new user prompt flushes the active history cell.
             self.clear_recap_loading();
         }
-        let render_before_submit =
-            render_in_history && matches!(&self.codex_op_target, CodexOpTarget::AppEvent);
+        let render_before_submit = render_in_history
+            && matches!(&self.codex_op_target, CodexOpTarget::AppEvent)
+            && !self.show_welcome_banner;
         if render_before_submit {
             self.on_user_message_display(user_message_display_for_history(
                 submitted_message.clone(),
@@ -409,6 +410,7 @@ impl ChatWidget {
         if !self.submit_op(op.clone()) {
             return (false, None);
         }
+        self.clear_landing_transient();
         self.show_welcome_banner = false;
         self.dismiss_backend_banner_for_new_turn();
         if render_in_history {

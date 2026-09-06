@@ -1231,13 +1231,9 @@ impl ChatWidget {
         }
         self.refresh_status_line_if_workspace_headline_due();
         self.refresh_thread_usage_if_settlement_due();
-        if self.show_welcome_banner
+        if self.landing_transient_active()
             && self.thread_id.is_some()
             && self.local_settings.tui.animations
-            && self.transcript.active_cell.as_ref().is_some_and(|cell| {
-                cell.as_any().is::<history_cell::SessionHeaderHistoryCell>()
-                    || cell.as_any().is::<history_cell::SessionInfoCell>()
-            })
         {
             // Landing motion starts after session configuration so the startup input pump stays
             // event-driven. Submitting the first prompt clears the banner and stops this timer,
@@ -1253,6 +1249,24 @@ impl ChatWidget {
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
             self.request_pending_usage_output_insertion();
         }
+    }
+
+    /// Drop the startup landing cell when the first user turn is accepted.
+    ///
+    /// The landing is a render-only stage, so it must never be handed to the history event
+    /// stream while the optimistic user prompt is being displayed.
+    fn clear_landing_transient(&mut self) {
+        if self.landing_transient_active() {
+            self.transcript.take_active_cell();
+        }
+    }
+
+    fn landing_transient_active(&self) -> bool {
+        self.show_welcome_banner
+            && self.transcript.active_cell.as_ref().is_some_and(|cell| {
+                cell.as_any().is::<history_cell::SessionHeaderHistoryCell>()
+                    || cell.as_any().is::<history_cell::SessionInfoCell>()
+            })
     }
 
     fn flush_completed_command_activity(&mut self) {
@@ -1280,6 +1294,9 @@ impl ChatWidget {
                 .active_cell
                 .as_ref()
                 .is_some_and(|c| c.as_any().is::<history_cell::SessionHeaderHistoryCell>());
+        // The fresh-session landing is a render-only stage. Startup notices may arrive after the
+        // session is configured, so keep them from flushing the stage into scrollback.
+        let keep_landing_active = self.landing_transient_active();
         let history_width = self
             .last_rendered_width
             .get()
@@ -1287,6 +1304,7 @@ impl ChatWidget {
             .unwrap_or(u16::MAX);
 
         if !keep_placeholder_header_active
+            && !keep_landing_active
             && !cell
                 .display_lines_for_mode(history_width, self.history_render_mode())
                 .is_empty()
@@ -1297,6 +1315,7 @@ impl ChatWidget {
             }
             self.transcript.needs_final_message_separator = true;
         } else if !keep_placeholder_header_active
+            && !keep_landing_active
             && self
                 .transcript
                 .active_cell
@@ -1539,6 +1558,14 @@ impl ChatWidget {
 
     /// Merge the real session info cell with any placeholder header to avoid double boxes.
     fn apply_session_info_cell(&mut self, cell: history_cell::SessionInfoCell) {
+        if self.show_welcome_banner {
+            // A fresh startup keeps the landing stage live instead of committing it to
+            // scrollback. The first accepted prompt removes it through `clear_landing_transient`.
+            self.transcript.take_active_cell();
+            self.transcript.active_cell = Some(Box::new(cell));
+            return;
+        }
+
         let mut session_info_cell = Some(Box::new(cell) as Box<dyn HistoryCell>);
         let merged_header = if let Some(active) = self.transcript.take_active_cell() {
             if active
