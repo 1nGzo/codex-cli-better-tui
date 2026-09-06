@@ -729,7 +729,7 @@ async fn session_info_first_event_suppresses_tooltips_and_nux() {
 
     let rendered = render_transcript(&cell).join("\n");
     assert!(!rendered.contains("Model just became available"));
-    assert!(rendered.contains("╭──"));
+    assert!(rendered.contains("████████"));
     assert!(rendered.contains("/ commands"));
 }
 
@@ -756,6 +756,20 @@ async fn session_info_first_event_landing_snapshot() {
 }
 
 #[test]
+fn landing_session_header_medium_snapshot() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.6-sol".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ true,
+        PathBuf::from("/tmp/project"),
+        "test",
+    )
+    .with_landing_presentation();
+
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 44)).join("\n"));
+}
+
+#[test]
 fn landing_session_header_adapts_to_narrow_width() {
     const WIDTH: u16 = 18;
     let cell = SessionHeaderHistoryCell::new(
@@ -774,6 +788,27 @@ fn landing_session_header_adapts_to_narrow_width() {
             .all(|line| line_width(line) <= usize::from(WIDTH))
     );
     insta::assert_snapshot!(render_lines(&lines).join("\n"));
+}
+
+#[test]
+fn landing_session_header_stays_within_requested_resize_widths() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.6-sol".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ true,
+        PathBuf::from("a/very/long/project/directory"),
+        "test",
+    )
+    .with_landing_presentation();
+
+    for width in [120, 96, 60, 18] {
+        assert!(
+            cell.display_lines(width)
+                .iter()
+                .all(|line| line_width(line) <= usize::from(width)),
+            "landing content overflowed at {width} columns"
+        );
+    }
 }
 
 #[tokio::test]

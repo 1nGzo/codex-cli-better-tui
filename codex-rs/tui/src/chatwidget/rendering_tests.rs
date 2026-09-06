@@ -154,7 +154,7 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
     let header = frame
         .content
         .chunks(usize::from(frame.area.width))
-        .take(/*n*/ 12)
+        .take(/*n*/ 15)
         .map(|row| {
             row.iter()
                 .map(ratatui::buffer::Cell::symbol)
@@ -171,9 +171,13 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
 
     insta::assert_snapshot!(header.replace(&cwd, &normalized_cwd), @"
 
-            ╭──  ╭─╮  ┌─╮  ┌──  ╷ ╷
-            │    │ │  │ │  ├─    ╳
-            ╰──  ╰─╯  └─╯  └──  ╵ ╵
+       ██████ ██████ ████   ██████ ██  ██
+       ██████ ██████ ██████ ██████ ██  ██
+       ██     ██  ██ ██  ██ ██      ████
+       ██     ██  ██ ██  ██ █████    ██
+       ██     ██  ██ ██  ██ ██      ████
+       ██████ ██████ ██████ ██████ ██  ██
+       ██████ ██████ ████   ██████ ██  ██
 
                     loading
                   /tmp/project

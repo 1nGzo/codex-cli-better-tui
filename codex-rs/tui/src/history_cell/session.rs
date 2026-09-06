@@ -7,10 +7,28 @@ use crate::width::display_width;
 
 pub(crate) const SESSION_HEADER_MAX_INNER_WIDTH: usize = 56; // Just an eyeballed value
 
-const LANDING_WORDMARK: [[&str; 5]; 3] = [
-    ["╭──", "╭─╮", "┌─╮", "┌──", "╷ ╷"],
-    ["│  ", "│ │", "│ │", "├─ ", " ╳ "],
-    ["╰──", "╰─╯", "└─╯", "└──", "╵ ╵"],
+const LANDING_WIDE_MIN_WIDTH: usize = 52;
+const LANDING_MEDIUM_MIN_WIDTH: usize = 38;
+
+const LANDING_WORDMARK_WIDE: [[&str; 5]; 8] = [
+    ["████████", "████████", "██████  ", "████████", "██    ██"],
+    ["████████", "████████", "████████", "████████", "██    ██"],
+    ["██      ", "██    ██", "██    ██", "██      ", "  ████  "],
+    ["██      ", "██    ██", "██    ██", "██████  ", "   ██   "],
+    ["██      ", "██    ██", "██    ██", "██████  ", "   ██   "],
+    ["██      ", "██    ██", "██    ██", "██      ", "  ████  "],
+    ["████████", "████████", "████████", "████████", "██    ██"],
+    ["████████", "████████", "██████  ", "████████", "██    ██"],
+];
+
+const LANDING_WORDMARK_MEDIUM: [[&str; 5]; 7] = [
+    ["██████", "██████", "████  ", "██████", "██  ██"],
+    ["██████", "██████", "██████", "██████", "██  ██"],
+    ["██    ", "██  ██", "██  ██", "██    ", " ████ "],
+    ["██    ", "██  ██", "██  ██", "█████ ", "  ██  "],
+    ["██    ", "██  ██", "██  ██", "██    ", " ████ "],
+    ["██████", "██████", "██████", "██████", "██  ██"],
+    ["██████", "██████", "████  ", "██████", "██  ██"],
 ];
 
 pub(crate) fn card_inner_width(width: u16, max_inner_width: usize) -> Option<usize> {
@@ -308,6 +326,43 @@ impl SessionHeaderHistoryCell {
         line
     }
 
+    fn landing_wordmark_lines(
+        wordmark: &[[&'static str; 5]],
+        letter_spacing: &'static str,
+        width: usize,
+    ) -> Vec<Line<'static>> {
+        let last_row = wordmark.len().saturating_sub(1);
+        wordmark
+            .iter()
+            .enumerate()
+            .map(|(row_index, row)| {
+                let mut spans = Vec::with_capacity(row.len() * 2 - 1);
+                for (letter_index, glyph) in row.iter().enumerate() {
+                    if letter_index > 0 {
+                        spans.push(letter_spacing.into());
+                    }
+                    let style = match (letter_index, row_index) {
+                        // Keep the wordmark mostly in the terminal foreground, with cyan flowing
+                        // through the rounded strokes and a small magenta transition at the X.
+                        (1 | 2, row) if row > 1 && row + 2 < last_row => {
+                            Style::default().cyan().bold()
+                        }
+                        (3, row) if row == wordmark.len() / 2 => Style::default().cyan().bold(),
+                        (4, row) if row == wordmark.len() / 2 => Style::default().magenta().bold(),
+                        (4, _) => Style::default().cyan().bold(),
+                        _ => Style::default().bold(),
+                    };
+                    spans.push(Span::styled(*glyph, style));
+                }
+                let mut line = Self::centered_line(Line::from(spans), width);
+                if let Some(last_span) = line.spans.last_mut() {
+                    last_span.content = last_span.content.trim_end().to_owned().into();
+                }
+                line
+            })
+            .collect()
+    }
+
     fn landing_display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let width = usize::from(width);
         if width == 0 {
@@ -315,24 +370,20 @@ impl SessionHeaderHistoryCell {
         }
 
         let mut lines = vec![Line::from("")];
-        if width >= 28 {
-            let letter_styles = [
-                Style::default().bold(),
-                Style::default().bold(),
-                Style::default().magenta().bold(),
-                Style::default().bold(),
-                Style::default().cyan().bold(),
-            ];
-            for row in LANDING_WORDMARK {
-                let mut spans = Vec::with_capacity(row.len() * 2 - 1);
-                for (index, glyph) in row.into_iter().enumerate() {
-                    if index > 0 {
-                        spans.push("  ".into());
-                    }
-                    spans.push(Span::styled(glyph, letter_styles[index]));
-                }
-                lines.push(Self::centered_line(Line::from(spans), width));
-            }
+        if width >= LANDING_WIDE_MIN_WIDTH {
+            lines.extend(Self::landing_wordmark_lines(
+                &LANDING_WORDMARK_WIDE,
+                "  ",
+                width,
+            ));
+            lines.push(Line::from(""));
+        } else if width >= LANDING_MEDIUM_MIN_WIDTH {
+            lines.extend(Self::landing_wordmark_lines(
+                &LANDING_WORDMARK_MEDIUM,
+                " ",
+                width,
+            ));
+            lines.push(Line::from(""));
         } else {
             let wordmark = if width >= 9 { "C O D E X" } else { "CODEX" };
             let wordmark = truncate_line_with_ellipsis_if_overflow(
@@ -340,9 +391,8 @@ impl SessionHeaderHistoryCell {
                 width,
             );
             lines.push(Self::centered_line(wordmark, width));
+            lines.push(Line::from(""));
         }
-
-        lines.push(Line::from(""));
 
         let mut model_spans = vec![Span::styled(self.model.clone(), self.model_style).bold()];
         if width >= 28
