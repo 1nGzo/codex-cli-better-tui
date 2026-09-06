@@ -1,13 +1,13 @@
 ---
 source: tui/src/history_cell/tests.rs
-expression: "render_lines(&lines).join(\"\\n\")"
+expression: "render_lines(&cell.display_lines(width)).join(\"\\n\")"
 ---
 ╭────────────────╮
 │                │
 │   C O D E X    │
 │                │
 │  gpt-5.6-sol   │
-│   …directory   │
+│   /tmp/…ject   │
 │                │
 │  ? shortcuts   │
 │                │

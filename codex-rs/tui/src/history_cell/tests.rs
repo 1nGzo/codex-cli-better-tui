@@ -770,6 +770,57 @@ fn landing_session_header_medium_snapshot() {
 }
 
 #[test]
+fn landing_session_header_resize_snapshots() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.6-sol".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ true,
+        PathBuf::from("/tmp/project"),
+        "test",
+    )
+    .with_landing_presentation();
+
+    for width in [120, 96, 60, 18] {
+        insta::assert_snapshot!(
+            format!("landing_session_header_width_{width}"),
+            render_lines(&cell.display_lines(width)).join("\n")
+        );
+    }
+}
+
+#[test]
+fn landing_session_header_motion_phase_snapshots() {
+    for phase in [0, 6] {
+        let cell = SessionHeaderHistoryCell::new(
+            "gpt-5.6-sol".to_string(),
+            Some(ReasoningEffortConfig::High),
+            /*show_fast_status*/ true,
+            PathBuf::from("/tmp/project"),
+            "test",
+        )
+        .with_landing_presentation()
+        .with_landing_motion_phase(phase);
+        let styles = cell
+            .display_lines(/*width*/ 60)
+            .iter()
+            .skip(2)
+            .take(8)
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .filter(|span| span.content.contains('█'))
+                    .map(|span| format!("{:?}", span.style.fg))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        insta::assert_snapshot!(format!("landing_motion_phase_{phase}"), styles);
+    }
+}
+
+#[test]
 fn landing_session_header_adapts_to_narrow_width() {
     const WIDTH: u16 = 18;
     let cell = SessionHeaderHistoryCell::new(

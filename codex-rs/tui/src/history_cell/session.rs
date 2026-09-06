@@ -9,6 +9,16 @@ pub(crate) const SESSION_HEADER_MAX_INNER_WIDTH: usize = 56; // Just an eyeballe
 
 const LANDING_WIDE_MIN_WIDTH: usize = 52;
 const LANDING_MEDIUM_MIN_WIDTH: usize = 38;
+const LANDING_FRAME_MAX_INNER_WIDTH: usize = 60;
+const LANDING_MOTION_PERIOD: u8 = 12;
+const LANDING_MOTION_STEP_MS: u128 = 520;
+
+const LANDING_SILVER: Color = Color::Rgb(204, 211, 217);
+const LANDING_SILVER_BRIGHT: Color = Color::Rgb(232, 236, 239);
+const LANDING_BLUE: Color = Color::Rgb(139, 180, 211);
+const LANDING_MUTED_BLUE: Color = Color::Rgb(103, 137, 163);
+const LANDING_DARK_GOLD: Color = Color::Rgb(150, 125, 76);
+const LANDING_FRAME: Color = Color::Rgb(76, 86, 95);
 
 const LANDING_WORDMARK_WIDE: [[&str; 5]; 8] = [
     ["████████", "████████", "██████  ", "████████", "██    ██"],
@@ -41,7 +51,11 @@ pub(crate) fn card_inner_width(width: u16, max_inner_width: usize) -> Option<usi
 
 /// Render `lines` inside a border sized to the widest span in the content.
 pub(crate) fn with_border(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
-    with_border_internal(lines, /*forced_inner_width*/ None)
+    with_border_internal(
+        lines,
+        /*forced_inner_width*/ None,
+        Style::default().dim(),
+    )
 }
 
 /// Render `lines` inside a border whose inner width is at least `inner_width`.
@@ -53,12 +67,13 @@ pub(crate) fn with_border_with_inner_width(
     lines: Vec<Line<'static>>,
     inner_width: usize,
 ) -> Vec<Line<'static>> {
-    with_border_internal(lines, Some(inner_width))
+    with_border_internal(lines, Some(inner_width), Style::default().dim())
 }
 
 fn with_border_internal(
     lines: Vec<Line<'static>>,
     forced_inner_width: Option<usize>,
+    border_style: Style,
 ) -> Vec<Line<'static>> {
     let max_line_width = lines.iter().map(line_width).max().unwrap_or(0);
     let content_width = forced_inner_width
@@ -67,22 +82,31 @@ fn with_border_internal(
 
     let mut out = Vec::with_capacity(lines.len() + 2);
     let border_inner_width = content_width + 2;
-    out.push(vec![format!("╭{}╮", "─".repeat(border_inner_width)).dim()].into());
+    out.push(Line::from(Span::styled(
+        format!("╭{}╮", "─".repeat(border_inner_width)),
+        border_style,
+    )));
 
     for line in lines.into_iter() {
         let used_width = line_width(&line);
         let span_count = line.spans.len();
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(span_count + 4);
-        spans.push(Span::from("│ ").dim());
+        spans.push(Span::styled("│ ", border_style));
         spans.extend(line);
         if used_width < content_width {
-            spans.push(Span::from(" ".repeat(content_width - used_width)).dim());
+            spans.push(Span::styled(
+                " ".repeat(content_width - used_width),
+                border_style,
+            ));
         }
-        spans.push(Span::from(" │").dim());
+        spans.push(Span::styled(" │", border_style));
         out.push(Line::from(spans));
     }
 
-    out.push(vec![format!("╰{}╯", "─".repeat(border_inner_width)).dim()].into());
+    out.push(Line::from(Span::styled(
+        format!("╰{}╯", "─".repeat(border_inner_width)),
+        border_style,
+    )));
 
     out
 }
@@ -173,7 +197,9 @@ pub(crate) fn new_session_info(
         &session.permission_profile,
     ));
     if is_first_event {
-        header = header.with_landing_presentation();
+        header = header.with_landing_presentation().with_landing_motion(
+            MotionMode::from_animations_enabled(local_settings.tui.animations),
+        );
     }
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
@@ -231,6 +257,9 @@ pub(crate) struct SessionHeaderHistoryCell {
     directory: PathBuf,
     yolo_mode: bool,
     landing_presentation: bool,
+    landing_motion_enabled: bool,
+    landing_motion_origin: Instant,
+    landing_motion_phase_override: Option<u8>,
 }
 
 impl SessionHeaderHistoryCell {
@@ -268,6 +297,9 @@ impl SessionHeaderHistoryCell {
             directory,
             yolo_mode: false,
             landing_presentation: false,
+            landing_motion_enabled: false,
+            landing_motion_origin: Instant::now(),
+            landing_motion_phase_override: None,
         }
     }
 
@@ -278,6 +310,17 @@ impl SessionHeaderHistoryCell {
 
     pub(crate) fn with_landing_presentation(mut self) -> Self {
         self.landing_presentation = true;
+        self
+    }
+
+    pub(crate) fn with_landing_motion(mut self, motion_mode: MotionMode) -> Self {
+        self.landing_motion_enabled = motion_mode == MotionMode::Animated;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_landing_motion_phase(mut self, phase: u8) -> Self {
+        self.landing_motion_phase_override = Some(phase % LANDING_MOTION_PERIOD);
         self
     }
 
@@ -330,8 +373,8 @@ impl SessionHeaderHistoryCell {
         wordmark: &[[&'static str; 5]],
         letter_spacing: &'static str,
         width: usize,
+        motion_phase: u8,
     ) -> Vec<Line<'static>> {
-        let last_row = wordmark.len().saturating_sub(1);
         wordmark
             .iter()
             .enumerate()
@@ -341,16 +384,14 @@ impl SessionHeaderHistoryCell {
                     if letter_index > 0 {
                         spans.push(letter_spacing.into());
                     }
-                    let style = match (letter_index, row_index) {
-                        // Keep the wordmark mostly in the terminal foreground, with cyan flowing
-                        // through the rounded strokes and a small magenta transition at the X.
-                        (1 | 2, row) if row > 1 && row + 2 < last_row => {
-                            Style::default().cyan().bold()
-                        }
-                        (3, row) if row == wordmark.len() / 2 => Style::default().cyan().bold(),
-                        (4, row) if row == wordmark.len() / 2 => Style::default().magenta().bold(),
-                        (4, _) => Style::default().cyan().bold(),
-                        _ => Style::default().bold(),
+                    let sweep = (usize::from(motion_phase) + letter_index * 2 + row_index)
+                        % usize::from(LANDING_MOTION_PERIOD);
+                    let style = if sweep <= 1 {
+                        Style::default().fg(LANDING_BLUE).bold()
+                    } else if sweep <= 3 {
+                        Style::default().fg(LANDING_SILVER_BRIGHT).bold()
+                    } else {
+                        Style::default().fg(LANDING_SILVER).bold()
                     };
                     spans.push(Span::styled(*glyph, style));
                 }
@@ -369,86 +410,125 @@ impl SessionHeaderHistoryCell {
             return Vec::new();
         }
 
+        let frame_inner_width = width.saturating_sub(4).min(LANDING_FRAME_MAX_INNER_WIDTH);
+        if frame_inner_width == 0 {
+            return Vec::new();
+        }
+        let motion_phase = self.landing_motion_phase_override.unwrap_or_else(|| {
+            if self.landing_motion_enabled {
+                ((self.landing_motion_origin.elapsed().as_millis() / LANDING_MOTION_STEP_MS)
+                    % u128::from(LANDING_MOTION_PERIOD)) as u8
+            } else {
+                0
+            }
+        });
         let mut lines = vec![Line::from("")];
-        if width >= LANDING_WIDE_MIN_WIDTH {
+        if frame_inner_width >= LANDING_WIDE_MIN_WIDTH {
             lines.extend(Self::landing_wordmark_lines(
                 &LANDING_WORDMARK_WIDE,
                 "  ",
-                width,
+                frame_inner_width,
+                motion_phase,
             ));
             lines.push(Line::from(""));
-        } else if width >= LANDING_MEDIUM_MIN_WIDTH {
+        } else if frame_inner_width >= LANDING_MEDIUM_MIN_WIDTH {
             lines.extend(Self::landing_wordmark_lines(
                 &LANDING_WORDMARK_MEDIUM,
                 " ",
-                width,
+                frame_inner_width,
+                motion_phase,
             ));
             lines.push(Line::from(""));
         } else {
-            let wordmark = if width >= 9 { "C O D E X" } else { "CODEX" };
+            let wordmark = if frame_inner_width >= 9 {
+                "C O D E X"
+            } else {
+                "CODEX"
+            };
             let wordmark = truncate_line_with_ellipsis_if_overflow(
-                Line::from(wordmark).magenta().bold(),
-                width,
+                Line::from(wordmark).style(Style::default().fg(LANDING_SILVER_BRIGHT).bold()),
+                frame_inner_width,
             );
-            lines.push(Self::centered_line(wordmark, width));
+            lines.push(Self::centered_line(wordmark, frame_inner_width));
             lines.push(Line::from(""));
         }
 
-        let mut model_spans = vec![Span::styled(self.model.clone(), self.model_style).bold()];
-        if width >= 28
+        let mut model_spans = vec![Span::styled(
+            self.model.clone(),
+            self.model_style.fg(LANDING_SILVER_BRIGHT).bold(),
+        )];
+        if frame_inner_width >= 28
             && let Some(reasoning) = self.reasoning_label()
         {
             model_spans.push("  ·  ".dim());
             model_spans.push(reasoning.to_owned().dim());
         }
-        if width >= 34 && self.show_fast_status {
+        if frame_inner_width >= 34 && self.show_fast_status {
             model_spans.push("  ·  ".dim());
-            model_spans.push("fast".magenta());
+            model_spans.push(Span::styled("fast", Style::default().fg(LANDING_DARK_GOLD)));
         }
         let model_line = truncate_line_with_ellipsis_if_overflow(
             Line::from(model_spans),
-            width.saturating_sub(2),
+            frame_inner_width.saturating_sub(2),
         );
-        lines.push(Self::centered_line(model_line, width));
+        lines.push(Self::centered_line(model_line, frame_inner_width));
 
-        let directory = self.format_directory(Some(width.saturating_sub(4)));
-        let directory_line =
-            truncate_line_with_ellipsis_if_overflow(Line::from(directory).dim(), width);
-        lines.push(Self::centered_line(directory_line, width));
+        let directory = self.format_directory(Some(frame_inner_width.saturating_sub(4)));
+        let directory_line = truncate_line_with_ellipsis_if_overflow(
+            Line::from(directory).fg(LANDING_MUTED_BLUE),
+            frame_inner_width,
+        );
+        lines.push(Self::centered_line(directory_line, frame_inner_width));
 
         if self.yolo_mode {
             lines.push(Self::centered_line(
-                "YOLO permissions".magenta().bold().into(),
-                width,
+                Span::styled(
+                    "YOLO permissions",
+                    Style::default().fg(LANDING_DARK_GOLD).bold(),
+                )
+                .into(),
+                frame_inner_width,
             ));
         }
 
         lines.push(Line::from(""));
-        let hints = if width >= 34 {
+        let hints = if frame_inner_width >= 34 {
             vec![
-                "/".cyan(),
+                Span::styled("/", Style::default().fg(LANDING_BLUE)),
                 " commands".dim(),
                 "      ".into(),
-                "@".cyan(),
+                Span::styled("@", Style::default().fg(LANDING_BLUE)),
                 " files".dim(),
                 "      ".into(),
-                "?".cyan(),
+                Span::styled("?", Style::default().fg(LANDING_BLUE)),
                 " shortcuts".dim(),
             ]
-        } else if width >= 20 {
+        } else if frame_inner_width >= 20 {
             vec![
-                "/".cyan(),
+                Span::styled("/", Style::default().fg(LANDING_BLUE)),
                 " commands".dim(),
                 "    ".into(),
-                "?".cyan(),
+                Span::styled("?", Style::default().fg(LANDING_BLUE)),
                 " shortcuts".dim(),
             ]
         } else {
-            vec!["?".cyan(), " shortcuts".dim()]
+            vec![
+                Span::styled("?", Style::default().fg(LANDING_BLUE)),
+                " shortcuts".dim(),
+            ]
         };
-        lines.push(Self::centered_line(Line::from(hints), width));
+        lines.push(Self::centered_line(Line::from(hints), frame_inner_width));
         lines.push(Line::from(""));
-        lines
+
+        let framed = with_border_internal(
+            lines,
+            Some(frame_inner_width),
+            Style::default().fg(LANDING_FRAME),
+        );
+        framed
+            .into_iter()
+            .map(|line| Self::centered_line(line, width))
+            .collect()
     }
 }
 

@@ -1,0 +1,12 @@
+---
+source: tui/src/history_cell/tests.rs
+expression: styles
+---
+Some(Rgb(139, 180, 211)),Some(Rgb(232, 236, 239)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217))
+Some(Rgb(139, 180, 211)),Some(Rgb(232, 236, 239)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217))
+Some(Rgb(232, 236, 239)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217))
+Some(Rgb(232, 236, 239)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217))
+Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(139, 180, 211))
+Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(139, 180, 211))
+Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(139, 180, 211)),Some(Rgb(232, 236, 239))
+Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(204, 211, 217)),Some(Rgb(139, 180, 211)),Some(Rgb(232, 236, 239))

@@ -147,14 +147,15 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
     let (mut widget, _sender, _events, _operations) = make_chatwidget_manual_with_sender().await;
     widget.transcript.active_cell = Some(ChatWidget::placeholder_session_header_cell(
         &widget.config,
-        true,
+        /*show_landing_presentation*/ true,
+        MotionMode::Animated,
     ));
 
     let frame = render_frame(&widget, /*width*/ 48);
     let header = frame
         .content
         .chunks(usize::from(frame.area.width))
-        .take(/*n*/ 15)
+        .take(/*n*/ 17)
         .map(|row| {
             row.iter()
                 .map(ratatui::buffer::Cell::symbol)
@@ -171,19 +172,70 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
 
     insta::assert_snapshot!(header.replace(&cwd, &normalized_cwd), @"
 
-       ██████ ██████ ████   ██████ ██  ██
-       ██████ ██████ ██████ ██████ ██  ██
-       ██     ██  ██ ██  ██ ██      ████
-       ██     ██  ██ ██  ██ █████    ██
-       ██     ██  ██ ██  ██ ██      ████
-       ██████ ██████ ██████ ██████ ██  ██
-       ██████ ██████ ████   ██████ ██  ██
-
-                    loading
-                  /tmp/project
-
-    / commands      @ files      ? shortcuts
+╭──────────────────────────────────────────────╮
+│                                              │
+│      ██████ ██████ ████   ██████ ██  ██      │
+│      ██████ ██████ ██████ ██████ ██  ██      │
+│      ██     ██  ██ ██  ██ ██      ████       │
+│      ██     ██  ██ ██  ██ █████    ██        │
+│      ██     ██  ██ ██  ██ ██      ████       │
+│      ██████ ██████ ██████ ██████ ██  ██      │
+│      ██████ ██████ ████   ██████ ██  ██      │
+│                                              │
+│                   loading                    │
+│                 /tmp/project                 │
+│                                              │
+│   / commands      @ files      ? shortcuts   │
+│                                              │
+╰──────────────────────────────────────────────╯
     ");
+}
+
+#[tokio::test]
+async fn landing_motion_schedules_sparse_frames_only_while_active() {
+    let (mut widget, _sender, _events, _operations) = make_chatwidget_manual_with_sender().await;
+    widget.transcript.active_cell = Some(ChatWidget::placeholder_session_header_cell(
+        &widget.config,
+        /*show_landing_presentation*/ true,
+        MotionMode::Animated,
+    ));
+    widget.thread_id = Some(ThreadId::new());
+    widget.show_welcome_banner = true;
+    widget.local_settings.tui.animations = true;
+
+    let (requester, mut requests) = FrameRequester::test_channel();
+    widget.frame_requester = requester;
+    let before_tick = Instant::now();
+    widget.pre_draw_tick();
+    let scheduled_at = requests
+        .try_recv()
+        .expect("active landing should schedule a motion frame");
+    assert!(
+        scheduled_at.saturating_duration_since(before_tick) >= Duration::from_millis(500),
+        "landing motion should remain low frequency"
+    );
+
+    let (requester, mut requests) = FrameRequester::test_channel();
+    widget.frame_requester = requester;
+    widget.local_settings.tui.animations = false;
+    widget.pre_draw_tick();
+    assert!(
+        requests.try_recv().is_err(),
+        "reduced motion should not schedule landing frames"
+    );
+
+    widget.local_settings.tui.animations = true;
+    widget.show_welcome_banner = true;
+    widget.submit_user_message(UserMessage::from("test prompt"));
+    assert!(!widget.show_welcome_banner);
+
+    let (requester, mut requests) = FrameRequester::test_channel();
+    widget.frame_requester = requester;
+    widget.pre_draw_tick();
+    assert!(
+        requests.try_recv().is_err(),
+        "submitted sessions should not schedule landing frames"
+    );
 }
 
 #[tokio::test]

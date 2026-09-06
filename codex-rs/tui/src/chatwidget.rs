@@ -60,6 +60,7 @@ use crate::legacy_core::config::PermissionProfileSnapshot;
 use crate::mention_codec::LinkedMention;
 use crate::mention_codec::encode_history_mentions_at_elements;
 use crate::model_catalog::ModelCatalog;
+use crate::motion::MotionMode;
 use crate::multi_agents;
 use crate::multi_agents::AgentMetadata;
 use crate::session_state::SessionNetworkProxyRuntime;
@@ -1230,6 +1231,20 @@ impl ChatWidget {
         }
         self.refresh_status_line_if_workspace_headline_due();
         self.refresh_thread_usage_if_settlement_due();
+        if self.show_welcome_banner
+            && self.thread_id.is_some()
+            && self.local_settings.tui.animations
+            && self.transcript.active_cell.as_ref().is_some_and(|cell| {
+                cell.as_any().is::<history_cell::SessionHeaderHistoryCell>()
+                    || cell.as_any().is::<history_cell::SessionInfoCell>()
+            })
+        {
+            // Landing motion starts after session configuration so the startup input pump stays
+            // event-driven. Submitting the first prompt clears the banner and stops this timer,
+            // so normal transcript rendering never carries a periodic redraw cost.
+            self.frame_requester
+                .schedule_frame_in(Duration::from_millis(520));
+        }
     }
 
     fn flush_active_cell(&mut self) {
@@ -1502,6 +1517,7 @@ impl ChatWidget {
     fn placeholder_session_header_cell(
         config: &Config,
         show_landing_presentation: bool,
+        motion_mode: MotionMode,
     ) -> Box<dyn HistoryCell> {
         let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
         let mut header = history_cell::SessionHeaderHistoryCell::new_with_style(
@@ -1514,7 +1530,9 @@ impl ChatWidget {
         )
         .with_yolo_mode(history_cell::is_yolo_mode(config));
         if show_landing_presentation {
-            header = header.with_landing_presentation();
+            header = header
+                .with_landing_presentation()
+                .with_landing_motion(motion_mode);
         }
         Box::new(header)
     }

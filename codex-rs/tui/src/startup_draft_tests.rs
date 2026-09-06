@@ -222,7 +222,7 @@ async fn startup_draft_hydrates_its_header_without_moving_the_composer() {
         pump.header
             .display_lines(width)
             .iter()
-            .any(|line| line.to_string().trim() == "loading")
+            .any(|line| line.to_string().contains("loading"))
     );
     pump.apply_config(&config);
     let expected_directory = crate::history_cell::SessionHeaderHistoryCell::format_directory_inner(
@@ -233,7 +233,7 @@ async fn startup_draft_hydrates_its_header_without_moving_the_composer() {
         pump.header
             .display_lines(width)
             .iter()
-            .any(|line| line.to_string().trim() == expected_directory)
+            .any(|line| line.to_string().contains(&expected_directory))
     );
     assert_eq!(
         startup_draft_renderable(&pump.header, &pump.bottom_pane, pump.session_action)

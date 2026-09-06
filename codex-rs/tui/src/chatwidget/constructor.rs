@@ -62,7 +62,11 @@ impl ChatWidget {
             settings: fallback_default,
         };
 
-        let active_cell = Some(Self::placeholder_session_header_cell(&config, show_landing));
+        let active_cell = Some(Self::placeholder_session_header_cell(
+            &config,
+            show_landing,
+            MotionMode::from_animations_enabled(local_settings.tui.animations),
+        ));
 
         let current_cwd = Some(config.cwd.to_path_buf());
         let effective_service_tier = crate::service_tier_resolution::effective_service_tier(
