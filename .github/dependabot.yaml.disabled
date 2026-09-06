@@ -1,3 +1,5 @@
+# Personal fork policy: GitHub ignores this file while it has the `.disabled`
+# suffix. Rename it back to `dependabot.yaml` to restore upstream version updates.
 # https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#package-ecosystem-
 
 version: 2
