@@ -11,13 +11,12 @@ const LANDING_WIDE_MIN_WIDTH: usize = 52;
 const LANDING_MEDIUM_MIN_WIDTH: usize = 36;
 // Keep the landing stage close to the viewport edges while leaving a calm gutter around it.
 const LANDING_FRAME_MAX_INNER_WIDTH: usize = 104;
-const LANDING_MOTION_PERIOD: u8 = 12;
+const LANDING_MOTION_PERIOD: u8 = 24;
 const LANDING_MOTION_STEP_MS: u128 = 520;
+const LANDING_SWEEP_HALF_WIDTH: usize = 10;
+const LANDING_SWEEP_MARGIN: usize = 8;
 
-const LANDING_SILVER: Color = Color::Rgb(204, 211, 217);
-const LANDING_SILVER_DIM: Color = Color::Rgb(188, 196, 202);
 const LANDING_SILVER_BRIGHT: Color = Color::Rgb(232, 236, 239);
-const LANDING_SCAN_ACCENT: Color = Color::Rgb(111, 183, 202);
 const LANDING_DARK_GOLD: Color = Color::Rgb(150, 125, 76);
 const LANDING_FRAME: Color = Color::Rgb(76, 86, 95);
 
@@ -387,35 +386,65 @@ impl SessionHeaderHistoryCell {
         motion_phase: u8,
         motion_active: bool,
     ) -> Vec<Line<'static>> {
+        let wordmark_width = wordmark
+            .first()
+            .map(|row| {
+                row.iter().map(|glyph| display_width(glyph)).sum::<usize>()
+                    + display_width(letter_spacing) * row.len().saturating_sub(1)
+            })
+            .unwrap_or(0);
+        let sweep_travel = wordmark_width + 2 * (LANDING_SWEEP_HALF_WIDTH + LANDING_SWEEP_MARGIN);
+        let sweep_period = usize::from(LANDING_MOTION_PERIOD);
+        let sweep_center = (usize::from(motion_phase) * sweep_travel / sweep_period) as isize
+            - (LANDING_SWEEP_HALF_WIDTH + LANDING_SWEEP_MARGIN) as isize;
+
         wordmark
             .iter()
             .enumerate()
             .map(|(row_index, row)| {
-                let mut spans = Vec::with_capacity(row.len() * 2 - 1);
+                let mut spans = Vec::with_capacity(wordmark_width + row.len());
+                let mut character_x = 0;
                 for (letter_index, glyph) in row.iter().enumerate() {
                     if letter_index > 0 {
                         spans.push(letter_spacing.into());
+                        character_x += display_width(letter_spacing);
                     }
-                    let sweep = (usize::from(motion_phase) + letter_index * 2 + row_index)
-                        % usize::from(LANDING_MOTION_PERIOD);
-                    let style = if !motion_active {
-                        Style::default().fg(LANDING_SILVER).bold()
-                    } else if sweep <= 1 {
-                        // The only accent is carried by the moving scan; static landing screens
-                        // remain entirely silver.
-                        Style::default().fg(LANDING_SCAN_ACCENT).bold()
-                    } else if sweep <= 3 {
-                        Style::default().fg(LANDING_SILVER_BRIGHT).bold()
-                    } else if motion_active && (usize::from(motion_phase) / 3) % 2 == 0 {
-                        Style::default().fg(LANDING_SILVER).bold()
-                    } else {
-                        Style::default().fg(LANDING_SILVER_DIM).bold()
-                    };
-                    spans.push(Span::styled(*glyph, style));
+                    for character in glyph.chars() {
+                        // Keep the material deterministic and tied to the wordmark's global
+                        // character coordinate. The small ordered variation reads as brushed
+                        // metal without introducing flicker or per-frame noise.
+                        let brushed_tone =
+                            ((character_x * 5 + 1) % 7) as i16 - 3 + (row_index % 3) as i16 - 1;
+                        let sweep_tone = if motion_active {
+                            let distance = (character_x as isize - sweep_center).unsigned_abs();
+                            LANDING_SWEEP_HALF_WIDTH
+                                .saturating_sub(distance)
+                                .saturating_mul(24)
+                                / LANDING_SWEEP_HALF_WIDTH
+                        } else {
+                            0
+                        };
+                        let luminance =
+                            (192 + brushed_tone + sweep_tone as i16).clamp(0, 255) as u8;
+                        let style = Style::default()
+                            .fg(Color::Rgb(
+                                luminance.saturating_sub(4),
+                                luminance,
+                                luminance.saturating_add(5),
+                            ))
+                            .bold();
+                        spans.push(Span::styled(character.to_string(), style));
+                        character_x += 1;
+                    }
                 }
                 let mut line = Self::centered_line(Line::from(spans), width);
-                if let Some(last_span) = line.spans.last_mut() {
-                    last_span.content = last_span.content.trim_end().to_owned().into();
+                for span in line.spans.iter_mut().rev() {
+                    let trimmed = span.content.trim_end().to_owned();
+                    let was_non_empty = !trimmed.is_empty();
+                    span.content = trimmed.into();
+                    if was_non_empty {
+                        break;
+                    }
                 }
                 line
             })

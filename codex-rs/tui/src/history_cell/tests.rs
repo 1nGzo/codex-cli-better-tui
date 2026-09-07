@@ -161,6 +161,64 @@ fn render_lines(lines: &[Line<'static>]) -> Vec<String> {
         .collect()
 }
 
+fn landing_wordmark_tone_matrix(lines: &[Line<'static>]) -> String {
+    lines
+        .iter()
+        .skip(2)
+        .take(8)
+        .map(|line| {
+            line.spans
+                .iter()
+                .flat_map(|span| {
+                    span.content.as_ref().chars().map(|character| {
+                        if character != '█' {
+                            return character;
+                        }
+                        match span.style.fg {
+                            Some(Color::Rgb(red, _, _)) => match red {
+                                0..=190 => '·',
+                                191..=197 => '░',
+                                198..=204 => '▒',
+                                205..=211 => '▓',
+                                _ => '█',
+                            },
+                            _ => '?',
+                        }
+                    })
+                })
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn landing_wordmark_red_levels(phase: u8) -> Vec<Option<u8>> {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.6-sol".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ true,
+        PathBuf::from("/tmp/project"),
+        "test",
+    )
+    .with_landing_presentation()
+    .with_landing_motion_phase(phase);
+
+    cell.display_lines(/*width*/ 60)[2]
+        .spans
+        .iter()
+        .flat_map(|span| {
+            span.content.as_ref().chars().map(|character| {
+                (character == '█').then(|| match span.style.fg {
+                    Some(Color::Rgb(red, _, _)) => red,
+                    _ => 0,
+                })
+            })
+        })
+        .collect()
+}
+
 fn render_transcript(cell: &dyn HistoryCell) -> Vec<String> {
     render_lines(&cell.transcript_lines(u16::MAX))
 }
@@ -811,7 +869,7 @@ fn landing_session_header_hides_unavailable_account_and_repeated_context() {
 
 #[test]
 fn landing_session_header_motion_phase_snapshots() {
-    for phase in [0, 3, 6] {
+    for phase in [0, 3, 6, 12, 18] {
         let cell = SessionHeaderHistoryCell::new(
             "gpt-5.6-sol".to_string(),
             Some(ReasoningEffortConfig::High),
@@ -821,28 +879,14 @@ fn landing_session_header_motion_phase_snapshots() {
         )
         .with_landing_presentation()
         .with_landing_motion_phase(phase);
-        let styles = cell
-            .display_lines(/*width*/ 60)
-            .iter()
-            .skip(2)
-            .take(8)
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .filter(|span| span.content.contains('█'))
-                    .map(|span| format!("{:?}", span.style.fg))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let styles = landing_wordmark_tone_matrix(&cell.display_lines(/*width*/ 60));
 
         insta::assert_snapshot!(format!("landing_motion_phase_{phase}"), styles);
     }
 }
 
 #[test]
-fn landing_session_header_static_wordmark_is_uniform_silver() {
+fn landing_session_header_static_wordmark_is_silver_material() {
     let cell = SessionHeaderHistoryCell::new(
         "gpt-5.6-sol".to_string(),
         Some(ReasoningEffortConfig::High),
@@ -860,7 +904,54 @@ fn landing_session_header_static_wordmark_is_uniform_silver() {
         .map(|span| span.style.fg)
         .collect::<Vec<_>>();
 
-    assert_eq!(wordmark_colors, vec![Some(Color::Rgb(204, 211, 217)); 40]);
+    let red_levels = wordmark_colors
+        .iter()
+        .map(|color| match color {
+            Some(Color::Rgb(red, green, blue)) => {
+                assert!(*green >= *red);
+                assert!(*blue >= *green);
+                assert!(*blue - *red <= 12);
+                *red
+            }
+            _ => panic!("wordmark cells should use a silver RGB foreground"),
+        })
+        .collect::<Vec<_>>();
+    let min_red = *red_levels.iter().min().expect("wordmark cells");
+    let max_red = *red_levels.iter().max().expect("wordmark cells");
+    assert!(
+        min_red < max_red,
+        "static material should have tonal variation"
+    );
+    assert!(
+        max_red - min_red <= 8,
+        "static material should stay low contrast"
+    );
+}
+
+#[test]
+fn landing_session_header_motion_cycles_without_discontinuity() {
+    let frames = (0..=24)
+        .map(landing_wordmark_red_levels)
+        .collect::<Vec<_>>();
+
+    assert_eq!(frames.first(), frames.last());
+    assert!(
+        frames
+            .iter()
+            .flat_map(|frame| frame.iter().flatten())
+            .any(|red| *red > frames[0].iter().flatten().copied().max().unwrap())
+    );
+
+    for adjacent in frames.windows(2) {
+        for (left, right) in adjacent[0].iter().zip(&adjacent[1]) {
+            if let (Some(left), Some(right)) = (left, right) {
+                assert!(
+                    left.abs_diff(*right) <= 18,
+                    "sweep changed too abruptly: {left} -> {right}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
