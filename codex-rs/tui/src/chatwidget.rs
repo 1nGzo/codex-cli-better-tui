@@ -1239,7 +1239,7 @@ impl ChatWidget {
             // event-driven. Submitting the first prompt clears the banner and stops this timer,
             // so normal transcript rendering never carries a periodic redraw cost.
             self.frame_requester
-                .schedule_frame_in(Duration::from_millis(520));
+                .schedule_frame_in(history_cell::LANDING_MOTION_STEP);
         }
     }
 

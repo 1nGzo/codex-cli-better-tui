@@ -823,6 +823,7 @@ fn landing_session_header_medium_snapshot() {
         "test",
     )
     .with_landing_presentation()
+    .with_yolo_mode(true)
     .with_landing_plan(Some(PlanType::Plus));
 
     insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 44)).join("\n"));
@@ -838,6 +839,7 @@ fn landing_session_header_resize_snapshots() {
         "test",
     )
     .with_landing_presentation()
+    .with_yolo_mode(true)
     .with_landing_plan(Some(PlanType::Plus));
 
     for width in [120, 96, 60, 18] {
@@ -865,6 +867,27 @@ fn landing_session_header_hides_unavailable_account_and_repeated_context() {
     assert!(!rendered.contains("high"));
     assert!(!rendered.contains("/tmp/project"));
     assert!(!rendered.contains("PLAN"));
+}
+
+#[test]
+fn landing_session_header_only_indexes_available_bootstrap_data() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.6-sol".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ true,
+        PathBuf::from("/tmp/project"),
+        "test",
+    )
+    .with_landing_presentation()
+    .with_yolo_mode(true)
+    .with_landing_plan(Some(PlanType::Plus));
+
+    let rendered = render_lines(&cell.display_lines(/*width*/ 60)).join("\n");
+    assert!(rendered.contains("§ PLAN      Plus"));
+    assert!(rendered.contains("§ MODE      YOLO"));
+    assert!(!rendered.contains("YOLO permissions"));
+    assert!(!rendered.contains("USAGE"));
+    assert!(rendered.contains("§ CODEX"));
 }
 
 #[test]
@@ -923,14 +946,18 @@ fn landing_session_header_static_wordmark_is_silver_material() {
         "static material should have tonal variation"
     );
     assert!(
-        max_red - min_red <= 8,
-        "static material should stay low contrast"
+        max_red - min_red >= 12,
+        "static material should keep its engraved bands visible"
+    );
+    assert!(
+        max_red - min_red <= 20,
+        "static material should keep adjacent silver bands restrained"
     );
 }
 
 #[test]
 fn landing_session_header_motion_cycles_without_discontinuity() {
-    let frames = (0..=24)
+    let frames = (0..=20)
         .map(landing_wordmark_red_levels)
         .collect::<Vec<_>>();
 

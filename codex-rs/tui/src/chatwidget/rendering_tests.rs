@@ -209,7 +209,7 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
     ");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn landing_motion_schedules_sparse_frames_only_while_active() {
     let (mut widget, _sender, mut events, _operations) = make_chatwidget_manual_with_sender().await;
     widget.transcript.active_cell = Some(ChatWidget::placeholder_session_header_cell(
@@ -263,23 +263,21 @@ async fn landing_motion_schedules_sparse_frames_only_while_active() {
     );
     assert!(drain_history_text(&mut events).is_empty());
 
-    let (requester, mut requests) = FrameRequester::test_channel();
-    widget.frame_requester = requester;
-    let before_tick = Instant::now();
-    widget.pre_draw_tick();
-    let scheduled_at = requests
-        .try_recv()
-        .expect("active landing should schedule a motion frame");
-    assert!(
-        scheduled_at.saturating_duration_since(before_tick) >= Duration::from_millis(500),
-        "landing motion should remain low frequency"
-    );
-
-    widget.pre_draw_tick();
-    assert!(
-        requests.try_recv().is_ok(),
-        "active landing should re-arm its next motion frame"
-    );
+    let (draw_tx, mut draw_rx) = tokio::sync::broadcast::channel(/*capacity*/ 4);
+    widget.frame_requester = FrameRequester::new(draw_tx);
+    let live_check_frames =
+        Duration::from_secs(16).as_millis() / history_cell::LANDING_MOTION_STEP.as_millis();
+    for _ in 0..live_check_frames {
+        // This mirrors the app draw path: every delivered frame runs `pre_draw_tick`, which must
+        // re-arm the next one for as long as the transient landing remains active.
+        widget.pre_draw_tick();
+        tokio::task::yield_now().await;
+        tokio::time::advance(history_cell::LANDING_MOTION_STEP + Duration::from_millis(1)).await;
+        assert!(
+            draw_rx.recv().await.is_ok(),
+            "active landing stopped scheduling before the 15-second lifecycle gate"
+        );
+    }
 
     widget.add_to_history(history_cell::new_info_event(
         "startup notice".to_string(),

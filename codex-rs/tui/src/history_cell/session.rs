@@ -11,12 +11,16 @@ const LANDING_WIDE_MIN_WIDTH: usize = 52;
 const LANDING_MEDIUM_MIN_WIDTH: usize = 36;
 // Keep the landing stage close to the viewport edges while leaving a calm gutter around it.
 const LANDING_FRAME_MAX_INNER_WIDTH: usize = 104;
-const LANDING_MOTION_PERIOD: u8 = 24;
-const LANDING_MOTION_STEP_MS: u128 = 520;
+const LANDING_MOTION_PERIOD: u8 = 20;
+pub(crate) const LANDING_MOTION_STEP: Duration = Duration::from_millis(320);
 const LANDING_SWEEP_HALF_WIDTH: usize = 10;
 const LANDING_SWEEP_MARGIN: usize = 8;
 
+const LANDING_SILVER_SHADOW: (u8, u8, u8) = (186, 192, 198);
+const LANDING_SILVER_MID: (u8, u8, u8) = (194, 200, 205);
+const LANDING_SILVER_HIGHLIGHT: (u8, u8, u8) = (202, 207, 212);
 const LANDING_SILVER_BRIGHT: Color = Color::Rgb(232, 236, 239);
+const LANDING_SILVER_MUTED: Color = Color::Rgb(126, 136, 145);
 const LANDING_DARK_GOLD: Color = Color::Rgb(150, 125, 76);
 const LANDING_FRAME: Color = Color::Rgb(76, 86, 95);
 
@@ -413,26 +417,49 @@ impl SessionHeaderHistoryCell {
                         // Keep the material deterministic and tied to the wordmark's global
                         // character coordinate. The small ordered variation reads as brushed
                         // metal without introducing flicker or per-frame noise.
-                        let brushed_tone =
-                            ((character_x * 5 + 1) % 7) as i16 - 3 + (row_index % 3) as i16 - 1;
+                        let edge_distance = row_index.min(wordmark.len() - row_index - 1);
+                        let band_tone = match edge_distance {
+                            0 => LANDING_SILVER_HIGHLIGHT,
+                            1 => LANDING_SILVER_MID,
+                            2 => LANDING_SILVER_SHADOW,
+                            _ => LANDING_SILVER_MID,
+                        };
+                        let brushed_tone = if (character_x + row_index * 3) % 7 == 0 {
+                            -1
+                        } else {
+                            0
+                        };
+                        let sweep_distance = (character_x as isize - sweep_center).unsigned_abs();
                         let sweep_tone = if motion_active {
-                            let distance = (character_x as isize - sweep_center).unsigned_abs();
                             LANDING_SWEEP_HALF_WIDTH
-                                .saturating_sub(distance)
-                                .saturating_mul(24)
+                                .saturating_sub(sweep_distance)
+                                .saturating_mul(20)
                                 / LANDING_SWEEP_HALF_WIDTH
                         } else {
                             0
                         };
+                        let (red, green, blue) = band_tone;
                         let luminance =
-                            (192 + brushed_tone + sweep_tone as i16).clamp(0, 255) as u8;
-                        let style = Style::default()
-                            .fg(Color::Rgb(
-                                luminance.saturating_sub(4),
+                            (i16::from(red) + brushed_tone + sweep_tone as i16).clamp(0, 255) as u8;
+                        let luminance_delta = i16::from(luminance) - i16::from(red);
+                        let scan_crosses_notch = motion_active
+                            && sweep_distance <= 1
+                            && brushed_tone < 0
+                            && character != ' ';
+                        let color = if scan_crosses_notch {
+                            Color::Rgb(
                                 luminance,
-                                luminance.saturating_add(5),
-                            ))
-                            .bold();
+                                luminance.saturating_sub(8),
+                                luminance.saturating_sub(22),
+                            )
+                        } else {
+                            Color::Rgb(
+                                luminance,
+                                (i16::from(green) + luminance_delta).clamp(0, 255) as u8,
+                                (i16::from(blue) + luminance_delta).clamp(0, 255) as u8,
+                            )
+                        };
+                        let style = Style::default().fg(color).bold();
                         spans.push(Span::styled(character.to_string(), style));
                         character_x += 1;
                     }
@@ -457,13 +484,27 @@ impl SessionHeaderHistoryCell {
             return Vec::new();
         }
 
-        let frame_inner_width = width.saturating_sub(8).min(LANDING_FRAME_MAX_INNER_WIDTH);
-        if frame_inner_width == 0 {
+        let preferred_inner_width = width.saturating_sub(8).min(LANDING_FRAME_MAX_INNER_WIDTH);
+        if preferred_inner_width == 0 {
             return Vec::new();
         }
+        let available_inner_width = width.saturating_sub(4).min(LANDING_FRAME_MAX_INNER_WIDTH);
+        let wide_hints_width = display_width("/ commands      @ files      ? shortcuts");
+        let compact_hints_width = display_width("/ commands    ? shortcuts");
+        let short_hints_width = display_width("? shortcuts");
+        let frame_inner_width = if available_inner_width >= wide_hints_width {
+            preferred_inner_width.max(wide_hints_width)
+        } else if available_inner_width >= compact_hints_width {
+            preferred_inner_width.max(compact_hints_width)
+        } else if available_inner_width >= short_hints_width {
+            preferred_inner_width.max(short_hints_width)
+        } else {
+            preferred_inner_width
+        };
         let motion_phase = self.landing_motion_phase_override.unwrap_or_else(|| {
             if self.landing_motion_enabled {
-                ((self.landing_motion_origin.elapsed().as_millis() / LANDING_MOTION_STEP_MS)
+                ((self.landing_motion_origin.elapsed().as_millis()
+                    / LANDING_MOTION_STEP.as_millis())
                     % u128::from(LANDING_MOTION_PERIOD)) as u8
             } else {
                 0
@@ -502,66 +543,125 @@ impl SessionHeaderHistoryCell {
             lines.push(Line::from(""));
         }
 
-        // Keep the hero's secondary row useful and truthful: the account plan is available from
-        // the bootstrap response, while model/cwd are already repeated in the footer.
-        if frame_inner_width >= 20
-            && let Some(plan) = &self.landing_plan
-        {
-            let plan_line = Line::from(vec![
-                Span::styled("PLAN", Style::default().fg(LANDING_DARK_GOLD).bold()),
-                "  ".into(),
-                Span::styled(plan.clone(), Style::default().fg(LANDING_SILVER_BRIGHT)),
-            ]);
-            let plan_line = truncate_line_with_ellipsis_if_overflow(plan_line, frame_inner_width);
-            lines.push(Self::centered_line(plan_line, frame_inner_width));
-        }
-
-        if self.yolo_mode {
-            let permissions_line = truncate_line_with_ellipsis_if_overflow(
-                Span::styled(
-                    "YOLO permissions",
-                    Style::default().fg(LANDING_DARK_GOLD).bold(),
-                )
-                .into(),
-                frame_inner_width,
-            );
-            lines.push(Self::centered_line(permissions_line, frame_inner_width));
+        // Only show values available at bootstrap. Usage is intentionally absent until account
+        // limits arrive; model and cwd are already repeated in the footer.
+        if frame_inner_width >= 20 {
+            let mut index_rows = Vec::new();
+            if let Some(plan) = &self.landing_plan {
+                index_rows.push(("PLAN", plan.clone()));
+            }
+            if self.yolo_mode {
+                index_rows.push(("MODE", "YOLO".to_string()));
+            }
+            let index_width = index_rows
+                .iter()
+                .map(|(_, value)| 12 + display_width(value))
+                .max()
+                .unwrap_or(0);
+            let index_padding = frame_inner_width.saturating_sub(index_width) / 2;
+            for (label, value) in index_rows {
+                let index_line = Line::from(vec![
+                    " ".repeat(index_padding).into(),
+                    Span::styled(
+                        format!("§ {label:<4}"),
+                        Style::default().fg(LANDING_DARK_GOLD).bold(),
+                    ),
+                    "      ".into(),
+                    Span::styled(value, Style::default().fg(LANDING_SILVER_BRIGHT)),
+                ]);
+                lines.push(truncate_line_with_ellipsis_if_overflow(
+                    index_line,
+                    frame_inner_width,
+                ));
+            }
         }
 
         lines.push(Line::from(""));
-        let hints = if frame_inner_width >= 34 {
+        let hints = if frame_inner_width >= wide_hints_width {
             vec![
                 Span::styled("/", Style::default().fg(LANDING_DARK_GOLD).bold()),
-                " commands".dim(),
+                Span::styled(" commands", Style::default().fg(LANDING_SILVER_MUTED)),
                 "      ".into(),
                 Span::styled("@", Style::default().fg(LANDING_DARK_GOLD).bold()),
-                " files".dim(),
+                Span::styled(" files", Style::default().fg(LANDING_SILVER_MUTED)),
                 "      ".into(),
                 Span::styled("?", Style::default().fg(LANDING_DARK_GOLD).bold()),
-                " shortcuts".dim(),
+                Span::styled(" shortcuts", Style::default().fg(LANDING_SILVER_MUTED)),
             ]
-        } else if frame_inner_width >= 20 {
+        } else if frame_inner_width >= compact_hints_width {
             vec![
                 Span::styled("/", Style::default().fg(LANDING_DARK_GOLD).bold()),
-                " commands".dim(),
+                Span::styled(" commands", Style::default().fg(LANDING_SILVER_MUTED)),
                 "    ".into(),
                 Span::styled("?", Style::default().fg(LANDING_DARK_GOLD).bold()),
-                " shortcuts".dim(),
+                Span::styled(" shortcuts", Style::default().fg(LANDING_SILVER_MUTED)),
             ]
         } else {
             vec![
                 Span::styled("?", Style::default().fg(LANDING_DARK_GOLD).bold()),
-                " shortcuts".dim(),
+                Span::styled(" shortcuts", Style::default().fg(LANDING_SILVER_MUTED)),
             ]
         };
-        lines.push(Self::centered_line(Line::from(hints), frame_inner_width));
+        let hints = truncate_line_with_ellipsis_if_overflow(Line::from(hints), frame_inner_width);
+        lines.push(Self::centered_line(hints, frame_inner_width));
         lines.push(Line::from(""));
 
-        let framed = with_border_internal(
-            lines,
-            Some(frame_inner_width),
-            Style::default().fg(LANDING_FRAME),
-        );
+        let border_inner_width = frame_inner_width + 2;
+        let frame_width = frame_inner_width + 4;
+        let frame_style = Style::default().fg(LANDING_FRAME);
+        let marker = "§ CODEX";
+        let marker_width = display_width(marker);
+        let mut top = vec![Span::styled("╭─", frame_style)];
+        if frame_width >= marker_width + 11 {
+            top.push(Span::styled("┬ ", frame_style));
+            top.push(Span::styled(
+                marker,
+                Style::default().fg(LANDING_DARK_GOLD).bold(),
+            ));
+            top.push(Span::styled(" ", frame_style));
+            let used_width = 2 + 2 + marker_width + 1;
+            top.push(Span::styled(
+                "─".repeat(frame_width.saturating_sub(used_width + 2)),
+                frame_style,
+            ));
+            top.push(Span::styled("┬╮", frame_style));
+        } else {
+            top.push(Span::styled(
+                "─".repeat(border_inner_width.saturating_sub(1)),
+                frame_style,
+            ));
+            top.push(Span::styled("╮", frame_style));
+        }
+
+        let mut framed = Vec::with_capacity(lines.len() + 2);
+        framed.push(Line::from(top));
+        for line in lines {
+            let used_width = line_width(&line);
+            let mut spans = Vec::with_capacity(line.spans.len() + 4);
+            spans.push(Span::styled("│ ", frame_style));
+            spans.extend(line);
+            if used_width < frame_inner_width {
+                spans.push(Span::styled(
+                    " ".repeat(frame_inner_width - used_width),
+                    frame_style,
+                ));
+            }
+            spans.push(Span::styled(" │", frame_style));
+            framed.push(Line::from(spans));
+        }
+        let bottom = if frame_width >= marker_width + 11 {
+            Line::from(vec![
+                Span::styled("╰─┴", frame_style),
+                Span::styled("─".repeat(frame_width.saturating_sub(6)), frame_style),
+                Span::styled("┴─╯", frame_style),
+            ])
+        } else {
+            Line::from(Span::styled(
+                format!("╰{}╯", "─".repeat(border_inner_width)),
+                frame_style,
+            ))
+        };
+        framed.push(bottom);
         framed
             .into_iter()
             .map(|line| Self::centered_line(line, width))
